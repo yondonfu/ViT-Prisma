@@ -398,12 +398,10 @@ def convert_pretrained_model_config(model_name: str, subfolder: str = None, is_t
         model = timm.create_model(model_name)
         hf_config = AutoConfig.from_pretrained(model.default_cfg['hf_hub_id'])
     elif is_clip:
-        model = AutoConfig.from_pretrained(model_name, subfolder=subfolder)
-        if subfolder:
-            hf_config = model.config
-        else:
+        hf_config = AutoConfig.from_pretrained(model_name, subfolder=subfolder)
+        if not subfolder:
             # Extract vision encoder from dual-encoder CLIP model.
-            hf_config = model.vision_config
+            hf_config = hf_config.vision_config
 
         hf_config.architecture = 'vit_clip_vision_encoder'
         hf_config.num_classes = hf_config.projection_dim # final output dimension instead of classes
