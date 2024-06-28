@@ -390,15 +390,21 @@ def fill_missing_keys(model, state_dict):
         state_dict[key] = default_state_dict[key]
     return state_dict
 
-def convert_pretrained_model_config(model_name: str, is_timm: bool = True, is_clip: bool = False) -> HookedViTConfig:
+def convert_pretrained_model_config(model_name: str, subfolder: str = None, is_timm: bool = True, is_clip: bool = False) -> HookedViTConfig:
     
     
 
     if is_timm:
         model = timm.create_model(model_name)
         hf_config = AutoConfig.from_pretrained(model.default_cfg['hf_hub_id'])
-    elif is_clip: # Extract vision encoder from dual-encoder CLIP model.
-        hf_config = AutoConfig.from_pretrained(model_name).vision_config
+    elif is_clip:
+        model = AutoConfig.from_pretrained(model_name, subfolder=subfolder)
+        if subfolder:
+            hf_config = model.config
+        else:
+            # Extract vision encoder from dual-encoder CLIP model.
+            hf_config = model.vision_config
+
         hf_config.architecture = 'vit_clip_vision_encoder'
         hf_config.num_classes = hf_config.projection_dim # final output dimension instead of classes
     else:
