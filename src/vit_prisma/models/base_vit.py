@@ -24,6 +24,7 @@ from vit_prisma.models.layers.transformer_block import TransformerBlock, BertBlo
 from vit_prisma.models.layers.head import Head
 
 from vit_prisma.training.training_dictionary import activation_dict, initialization_dict
+
 # from vit_prisma.models.prisma_net import PrismaNet
 from vit_prisma.prisma_tools.hook_point import HookPoint
 from vit_prisma.prisma_tools.hooked_root_module import HookedRootModule
@@ -32,7 +33,11 @@ from vit_prisma.configs import HookedViTConfig
 
 from vit_prisma.prisma_tools.activation_cache import ActivationCache
 
-from vit_prisma.prisma_tools.loading_from_pretrained import convert_pretrained_model_config, get_pretrained_state_dict, fill_missing_keys
+from vit_prisma.prisma_tools.loading_from_pretrained import (
+    convert_pretrained_model_config,
+    get_pretrained_state_dict,
+    fill_missing_keys,
+)
 from vit_prisma.utils.prisma_utils import transpose
 
 from vit_prisma.utils import devices
@@ -54,6 +59,7 @@ DTYPE_FROM_STRING = {
     "bf16": torch.bfloat16,
 }
 
+
 class HookedViT(HookedRootModule):
     """
     Base vision model.
@@ -63,9 +69,9 @@ class HookedViT(HookedRootModule):
     """
 
     def __init__(
-            self,
-            cfg: HookedViTConfig,
-            move_to_device: bool = True,
+        self,
+        cfg: HookedViTConfig,
+        move_to_device: bool = True,
     ):
         """
         Model initialization
@@ -95,7 +101,7 @@ class HookedViT(HookedRootModule):
         self.pos_embed = PosEmbedding(self.cfg)
         self.hook_pos_embed = HookPoint()
 
-        if self.cfg.layer_norm_pre: # Put layernorm after attn/mlp layers, not before
+        if self.cfg.layer_norm_pre:  # Put layernorm after attn/mlp layers, not before
             if self.cfg.normalization_type == "LN":
                 self.ln_pre = LayerNorm(self.cfg)
             elif self.cfg.normalization_type == "LNPre":
@@ -103,7 +109,9 @@ class HookedViT(HookedRootModule):
             elif self.cfg.normalization_type is None:
                 self.ln_pre = nn.Identity()
             else:
-                raise ValueError(f"Invalid normalization type: {self.cfg.normalization_type}")
+                raise ValueError(
+                    f"Invalid normalization type: {self.cfg.normalization_type}"
+                )
             self.hook_ln_pre = HookPoint()
 
         # Blocks
@@ -111,12 +119,9 @@ class HookedViT(HookedRootModule):
             block = BertBlock
         else:
             block = TransformerBlock
-        
+
         self.blocks = nn.ModuleList(
-            [
-                block(self.cfg, block_index)
-                for block_index in range(self.cfg.n_layers)
-            ]
+            [block(self.cfg, block_index) for block_index in range(self.cfg.n_layers)]
         )
         # Final layer norm
         if self.cfg.normalization_type == "LN":
@@ -126,28 +131,24 @@ class HookedViT(HookedRootModule):
         elif self.cfg.normalization_type is None:
             self.ln_final = nn.Identity()
         else:
-            raise ValueError(f"Invalid normalization type: {self.cfg.normalization_type}")
+            raise ValueError(
+                f"Invalid normalization type: {self.cfg.normalization_type}"
+            )
 
         # Final classification head
         self.head = Head(self.cfg)
 
-
         # Initialize weights
         self.init_weights()
-
-
 
         # Set up HookPoints
         self.setup()
 
-    def forward(self,
-            input: Union[
-            Float[torch.Tensor, "batch height width channels"],
-
-            ],
-            stop_at_layer: Optional[int] = None,
-
-        ):
+    def forward(
+        self,
+        input: Union[Float[torch.Tensor, "batch height width channels"],],
+        stop_at_layer: Optional[int] = None,
+    ):
         """Forward Pass.
         Args:
             stop_at_layer Optional[int]: If not None, stop the forward pass at the specified layer.
@@ -158,17 +159,17 @@ class HookedViT(HookedRootModule):
                 If not None, we return the last residual stream computed.
         """
 
-
-
         batch_size = input.shape[0]
 
         embed = self.hook_embed(self.embed(input))
 
-        if self.cfg.classification_type == 'cls':
-            cls_tokens = self.cls_token.expand(batch_size, -1, -1)  # CLS token for each item in the batch
-            embed = torch.cat((cls_tokens, embed), dim=1) # Add to embedding
+        if self.cfg.classification_type == "cls":
+            cls_tokens = self.cls_token.expand(
+                batch_size, -1, -1
+            )  # CLS token for each item in the batch
+            embed = torch.cat((cls_tokens, embed), dim=1)  # Add to embedding
         pos_embed = self.hook_pos_embed(self.pos_embed(input))
-        
+
         residual = embed + pos_embed
 
         if self.cfg.layer_norm_pre:
@@ -182,23 +183,23 @@ class HookedViT(HookedRootModule):
 
         x = self.ln_final(residual)
 
-        if self.cfg.classification_type == 'gaap':  # GAAP
+        if self.cfg.classification_type == "gaap":  # GAAP
             x = x.mean(dim=1)
-        elif self.cfg.classification_type == 'cls':  # CLS token
+        elif self.cfg.classification_type == "cls":  # CLS token
             x = x[:, 0]
-            
-        return x if self.cfg.return_type == 'pre_logits' else self.head(x)
+
+        return x if self.cfg.return_type == "pre_logits" else self.head(x)
 
     def init_weights(self):
-        if self.cfg.classification_type == 'cls':
+        if self.cfg.classification_type == "cls":
             nn.init.normal_(self.cls_token, std=self.cfg.cls_std)
-        # nn.init.trunc_normal_(self.position_embedding, std=self.cfg.pos_std)   
-        if self.cfg.weight_type == 'he':
-            for m in self.modules(): 
+        # nn.init.trunc_normal_(self.position_embedding, std=self.cfg.pos_std)
+        if self.cfg.weight_type == "he":
+            for m in self.modules():
                 if isinstance(m, PosEmbedding):
                     nn.init.normal_(m.W_pos, std=self.cfg.pos_std)
                 elif isinstance(m, nn.Linear) or isinstance(m, nn.Conv2d):
-                    nn.init.kaiming_normal_(m.weight, nonlinearity='relu')
+                    nn.init.kaiming_normal_(m.weight, nonlinearity="relu")
                     if m.bias is not None:
                         nn.init.constant_(m.bias, 0)
 
@@ -227,17 +228,17 @@ class HookedViT(HookedRootModule):
             return out, cache
         else:
             return out, cache_dict
-        
-    def tokens_to_residual_directions(self, labels):
-        '''
-        Logit-lens related funtions not implemented; see how we can implement a vision equivalent.
-        '''
 
-        answer_residual_directions = self.head.W_H[:,labels]  
+    def tokens_to_residual_directions(self, labels):
+        """
+        Logit-lens related funtions not implemented; see how we can implement a vision equivalent.
+        """
+
+        answer_residual_directions = self.head.W_H[:, labels]
         answer_residual_directions = einops.rearrange(
-                        answer_residual_directions, "d_model ... -> ... d_model"
-                    )
-        
+            answer_residual_directions, "d_model ... -> ... d_model"
+        )
+
         return answer_residual_directions
 
     def fold_layer_norm(
@@ -272,25 +273,19 @@ class HookedViT(HookedRootModule):
                 ] + (
                     state_dict[f"blocks.{l}.attn.W_Q"]
                     * state_dict[f"blocks.{l}.ln1.b"][None, :, None]
-                ).sum(
-                    -2
-                )
+                ).sum(-2)
                 state_dict[f"blocks.{l}.attn.{gqa}b_K"] = state_dict[
                     f"blocks.{l}.attn.{gqa}b_K"
                 ] + (
                     state_dict[f"blocks.{l}.attn.{gqa}W_K"]
                     * state_dict[f"blocks.{l}.ln1.b"][None, :, None]
-                ).sum(
-                    -2
-                )
+                ).sum(-2)
                 state_dict[f"blocks.{l}.attn.{gqa}b_V"] = state_dict[
                     f"blocks.{l}.attn.{gqa}b_V"
                 ] + (
                     state_dict[f"blocks.{l}.attn.{gqa}W_V"]
                     * state_dict[f"blocks.{l}.ln1.b"][None, :, None]
-                ).sum(
-                    -2
-                )
+                ).sum(-2)
                 del state_dict[f"blocks.{l}.ln1.b"]
 
             state_dict[f"blocks.{l}.attn.W_Q"] = (
@@ -337,9 +332,7 @@ class HookedViT(HookedRootModule):
                     ] + (
                         state_dict[f"blocks.{l}.mlp.W_in"]
                         * state_dict[f"blocks.{l}.ln2.b"][:, None]
-                    ).sum(
-                        -2
-                    )
+                    ).sum(-2)
                     del state_dict[f"blocks.{l}.ln2.b"]
 
                 state_dict[f"blocks.{l}.mlp.W_in"] = (
@@ -371,9 +364,7 @@ class HookedViT(HookedRootModule):
                         ] + (
                             state_dict[f"blocks.{l}.mlp.W_out"]
                             * state_dict[f"blocks.{l}.mlp.ln.b"][:, None]
-                        ).sum(
-                            -2
-                        )
+                        ).sum(-2)
 
                         del state_dict[f"blocks.{l}.mlp.ln.b"]
 
@@ -410,11 +401,11 @@ class HookedViT(HookedRootModule):
             state_dict[f"head.W_H"] -= einops.reduce(
                 state_dict[f"head.W_H"], "d_model n_classes -> 1 n_classes", "mean"
             )
-                    
+
         print("LayerNorm folded.")
 
         return state_dict
-    
+
     def center_writing_weights(self, state_dict: Dict[str, torch.Tensor]):
         """Center Writing Weights.
 
@@ -447,7 +438,7 @@ class HookedViT(HookedRootModule):
                     state_dict[f"blocks.{l}.mlp.b_out"]
                     - state_dict[f"blocks.{l}.mlp.b_out"].mean()
                 )
-                
+
         print("Centered weights writing to residual stream")
         return state_dict
 
@@ -484,7 +475,6 @@ class HookedViT(HookedRootModule):
                 state_dict[f"blocks.{layer}.attn._b_V"] = torch.zeros_like(
                     state_dict[f"blocks.{layer}.attn._b_V"]
                 )
-                
 
         return state_dict
 
@@ -644,10 +634,14 @@ class HookedViT(HookedRootModule):
 
         if fold_value_biases:
             state_dict = self.fold_value_biases(state_dict)
+            print("folded value biases")
         if refactor_factored_attn_matrices:
             state_dict = self.refactor_factored_attn_matrices(state_dict)
+            print("refactored attn matrices")
 
         self.load_state_dict(state_dict, strict=False)
+
+        print("loaded state dict")
 
     def cuda(self):
         """Wrapper around cuda that also changes `self.cfg.device`."""
@@ -676,7 +670,7 @@ class HookedViT(HookedRootModule):
 
     @classmethod
     def from_pretrained(
-        cls, 
+        cls,
         model_name: str,
         is_timm: bool = True,
         is_clip: bool = False,
@@ -696,7 +690,6 @@ class HookedViT(HookedRootModule):
         use_attn_result: Optional[bool] = False,
         **from_pretrained_kwargs,
     ) -> "HookedViT":
-        
         assert not (
             from_pretrained_kwargs.get("load_in_8bit", False)
             or from_pretrained_kwargs.get("load_in_4bit", False)
@@ -719,17 +712,21 @@ class HookedViT(HookedRootModule):
             )
 
         # Set up other parts of transformer
-        
+
         cfg = convert_pretrained_model_config(
             model_name,
             is_timm=is_timm,
             is_clip=is_clip,
         )
 
-
-
         state_dict = get_pretrained_state_dict(
-            model_name, is_timm, is_clip, cfg, hf_model, dtype=dtype, **from_pretrained_kwargs
+            model_name,
+            is_timm,
+            is_clip,
+            cfg,
+            hf_model,
+            dtype=dtype,
+            **from_pretrained_kwargs,
         )
 
         model = cls(cfg, move_to_device=False)
@@ -744,7 +741,6 @@ class HookedViT(HookedRootModule):
 
         # Set up other parameters
         model.set_use_attn_result(use_attn_result)
-
 
         if move_to_device:
             model.move_model_modules_to_device()
@@ -803,7 +799,6 @@ class HookedViT(HookedRootModule):
             assert (
                 self.cfg.use_attn_in
             ), f"Cannot add hook {hook_point_name} if use_attn_in is False"
-
 
     def accumulated_bias(
         self, layer: int, mlp_input: bool = False, include_mlp_biases=True
