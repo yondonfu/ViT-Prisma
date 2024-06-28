@@ -711,6 +711,7 @@ class HookedViT(HookedRootModule):
                 "float16 models may not work on CPU. Consider using a GPU or bfloat16."
             )
 
+        subfolder = None
         if "subfolder" in from_pretrained_kwargs:
             subfolder = from_pretrained_kwargs["subfolder"]
 
